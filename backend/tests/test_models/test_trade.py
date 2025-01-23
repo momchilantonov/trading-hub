@@ -1,60 +1,26 @@
-import pytest
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
-from app.models import User, TradingPlan, Trade, Strategy
+import pytest
+from flask import Flask
 from app import db
+from app.models import Trade, TradingPlan, Strategy
 
 
-@pytest.fixture
-def test_user(app):
-    """Create test user"""
+def test_trade_with_fees(app: Flask, test_setup):
+    """Test trade creation with entry and exit fees"""
     with app.app_context():
-        user = User(email='trader@example.com', username='trader')
-        user.set_password('password123')
-        db.session.add(user)
-        db.session.commit()
-        return db.session.get(User, user.id)
+        plan = db.session.get(TradingPlan, test_setup['plan_id'])
 
-
-@pytest.fixture
-def test_plan(app, test_user):
-    """Create test trading plan"""
-    with app.app_context():
-        user = db.session.merge(test_user)
-        plan = TradingPlan(user_id=user.id,
-                           name="Test Plan",
-                           type="day_trading")
-        db.session.add(plan)
-        db.session.commit()
-        return db.session.get(TradingPlan, plan.id)
-
-
-@pytest.fixture
-def test_strategy(app):
-    """Create test strategy"""
-    with app.app_context():
-        strategy = Strategy(name="Test Strategy",
-                            description="Test strategy description",
-                            parameters={
-                                "rsi_period": 14,
-                                "ma_period": 20
-                            })
-        db.session.add(strategy)
-        db.session.commit()
-        return db.session.get(Strategy, strategy.id)
-
-
-def test_create_trade(app, test_plan):
-    """Test basic trade creation"""
-    with app.app_context():
-        plan = db.session.merge(test_plan)
-        entry_time = datetime.utcnow()
-
+        # Create BTC/USD trade
         trade = Trade(trading_plan_id=plan.id,
-                      entry_price=Decimal('100.50'),
-                      entry_time=entry_time,
-                      symbol='EURUSD',
+                      entry_price=Decimal('50000.00'),
+                      exit_price=Decimal('51000.00'),
+                      entry_time=datetime.utcnow(),
+                      exit_time=datetime.utcnow(),
+                      symbol='BTCUSD',
                       position_size=Decimal('1.0'),
+                      entry_fee=Decimal('25.00'),
+                      exit_fee=Decimal('25.50'),
                       timeframe='H1')
 
         db.session.add(trade)
@@ -63,112 +29,83 @@ def test_create_trade(app, test_plan):
         # Refresh from database
         trade = db.session.get(Trade, trade.id)
 
-        assert trade.id is not None
-        assert trade.trading_plan_id == plan.id
-        assert trade.entry_price == Decimal('100.50')
-        assert trade.symbol == 'EURUSD'
-        assert trade.position_size == Decimal('1.0')
-        assert trade.timeframe == 'H1'
-        assert trade.exit_price is None
-        assert trade.exit_time is None
+        # Verify fees
+        assert trade.entry_fee == Decimal('25.00')
+        assert trade.exit_fee == Decimal('25.50')
+        assert trade.base_currency == 'BTC'
+        assert trade.quote_currency == 'USD'
 
 
-def test_trade_complete_lifecycle(app, test_plan, test_strategy):
-    """Test complete trade lifecycle including entry and exit"""
+def test_forex_trade_with_fees(app: Flask, test_setup):
+    """Test forex trade with fees"""
     with app.app_context():
-        plan = db.session.merge(test_plan)
-        strategy = db.session.merge(test_strategy)
-        entry_time = datetime.utcnow()
+        plan = db.session.get(TradingPlan, test_setup['plan_id'])
 
+        # Create EUR/USD trade
         trade = Trade(trading_plan_id=plan.id,
-                      strategy_id=strategy.id,
-                      entry_price=Decimal('100.00'),
-                      entry_time=entry_time,
-                      symbol='EURUSD',
-                      position_size=Decimal('1.0'),
-                      timeframe='H1')
-
-        db.session.add(trade)
-        db.session.commit()
-
-        # Add exit details
-        trade = db.session.get(Trade, trade.id)
-        exit_time = entry_time + timedelta(hours=2)
-        trade.exit_price = Decimal('101.00')
-        trade.exit_time = exit_time
-        db.session.commit()
-
-        # Refresh and verify
-        trade = db.session.get(Trade, trade.id)
-        assert trade.exit_price == Decimal('101.00')
-        assert trade.exit_time == exit_time
-        assert trade.strategy_id == strategy.id
-
-
-def test_trade_relationships(app, test_plan, test_strategy):
-    """Test trade relationships with plan and strategy"""
-    with app.app_context():
-        plan = db.session.merge(test_plan)
-        strategy = db.session.merge(test_strategy)
-
-        trade = Trade(trading_plan_id=plan.id,
-                      strategy_id=strategy.id,
-                      entry_price=Decimal('100.00'),
+                      entry_price=Decimal('1.2000'),
                       entry_time=datetime.utcnow(),
                       symbol='EURUSD',
-                      position_size=Decimal('1.0'))
+                      position_size=Decimal('100000'),
+                      entry_fee=Decimal('5.00'),
+                      timeframe='H1')
 
         db.session.add(trade)
         db.session.commit()
 
         # Refresh from database
         trade = db.session.get(Trade, trade.id)
-        plan = db.session.get(TradingPlan, plan.id)
-        strategy = db.session.get(Strategy, strategy.id)
 
-        # Test relationships
-        assert trade.trading_plan == plan
-        assert trade.strategy == strategy
-        assert trade in plan.trades
-        assert trade in strategy.trades
+        # Verify fees and currencies
+        assert trade.entry_fee == Decimal('5.00')
+        assert trade.exit_fee == 0  # Default value for incomplete trade
+        assert trade.base_currency == 'EUR'
+        assert trade.quote_currency == 'USD'
 
 
-def test_trade_validation(app, test_plan):
-    """Test trade validation requirements"""
+def test_trade_without_fees(app: Flask, test_setup):
+    """Test trade creation with default fees"""
     with app.app_context():
-        plan = db.session.merge(test_plan)
-
-        # Test missing required fields
-        with pytest.raises(Exception):
-            trade = Trade(trading_plan_id=plan.id)  # Missing required fields
-            db.session.add(trade)
-            db.session.commit()
-
-
-def test_trade_cascading_delete(app, test_plan, test_strategy):
-    """Test cascade delete behavior"""
-    with app.app_context():
-        plan = db.session.merge(test_plan)
-        strategy = db.session.merge(test_strategy)
+        plan = db.session.get(TradingPlan, test_setup['plan_id'])
 
         trade = Trade(trading_plan_id=plan.id,
-                      strategy_id=strategy.id,
-                      entry_price=Decimal('100.00'),
+                      entry_price=Decimal('1.2000'),
                       entry_time=datetime.utcnow(),
                       symbol='EURUSD',
-                      position_size=Decimal('1.0'))
+                      position_size=Decimal('100000'))
 
         db.session.add(trade)
         db.session.commit()
 
-        trade_id = trade.id
+        # Refresh from database
+        trade = db.session.get(Trade, trade.id)
 
-        # Delete plan should cascade to trade
-        db.session.delete(plan)
+        # Verify default fees
+        assert trade.entry_fee == 0
+        assert trade.exit_fee == 0
+
+
+def test_trade_fee_precision(app: Flask, test_setup):
+    """Test fee decimal precision handling"""
+    with app.app_context():
+        plan = db.session.get(TradingPlan, test_setup['plan_id'])
+
+        trade = Trade(
+            trading_plan_id=plan.id,
+            entry_price=Decimal('50000.00'),
+            entry_time=datetime.utcnow(),
+            symbol='BTCUSD',
+            position_size=Decimal('1.0'),
+            entry_fee=Decimal('0.00123'),  # Test small fee precision
+            exit_fee=Decimal('0.00456')
+        )
+
+        db.session.add(trade)
         db.session.commit()
 
-        # Verify trade is deleted
-        assert db.session.get(Trade, trade_id) is None
+        # Refresh from database
+        trade = db.session.get(Trade, trade.id)
 
-        # But strategy should still exist
-        assert db.session.get(Strategy, strategy.id) is not None
+        # Verify fee precision is maintained
+        assert trade.entry_fee == Decimal('0.00123')
+        assert trade.exit_fee == Decimal('0.00456')

@@ -8,6 +8,7 @@ from .analysis_routes import analysis_bp
 api_bp = Blueprint('api', __name__)
 
 
+# TODO Check blueprint
 def register_routes(app):
     """Register all blueprints with the app"""
     app.register_blueprint(auth_bp, url_prefix='/api/v1/auth')

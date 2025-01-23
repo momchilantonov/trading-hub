@@ -1,5 +1,6 @@
 from .base import BaseModel, GUID
 from app import db
+from app.utils.validators import ImageValidator
 
 
 class TradingPlan(BaseModel):
@@ -18,6 +19,9 @@ class TradingPlan(BaseModel):
     version = db.Column(db.Integer, nullable=False, default=1)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
 
+    # Image fields
+    plan_images = db.Column(db.JSON, default=[])  # Documentation images
+
     # Relationships
     user = db.relationship('User', back_populates='trading_plans')
     trades = db.relationship('Trade',
@@ -32,3 +36,9 @@ class TradingPlan(BaseModel):
                                    back_populates='trading_plan',
                                    lazy=True,
                                    cascade='all, delete-orphan')
+
+    def __setattr__(self, name, value):
+        """Validate images before setting"""
+        if name == 'plan_images' and value is not None:
+            ImageValidator.validate_image_list(value)
+        super().__setattr__(name, value)
